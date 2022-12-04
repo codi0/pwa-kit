@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+
+	<meta charset="utf-8">
+	<title>App loading...</title>
+
+	<meta name="viewport" content="viewport-fit=cover, width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
+	<meta name="apple-mobile-web-app-capable" content="yes">
+	<meta name="mobile-web-app-capable" content="yes">
+	<meta name="format-detection" content="telephone=no">
+	<meta name="msapplication-tap-highlight" content="no">
+	<meta name="theme-color" content="#1976d2">
+
+	<link rel="icon" href="data:,">
+
+	<style>
+	*, :after, :before {
+		box-sizing: border-box;
+		user-select: text;
+	}
+
+	body {
+		font-family: -apple-system, BlinkMacSystemFont, Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+	}
+
+	html, body, #splash, #root {
+		width: 100%;
+		height: 100%;
+		padding: 0;
+		margin: 0;
+	}
+
+	.none {
+		display: none;
+	}
+
+	.hidden {
+		visibility: hidden;
+	}
+
+	.middle {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		width: 100%;
+		height: 100%;
+		text-align: center;	
+	}
+
+	#splash {
+		position: absolute;
+		top: 0; left: 0;
+		background: #fff;
+		z-index: 999;
+	}
+
+	#splash .logo {
+		--width: 80px;
+	}
+
+	.pwa #splash .logo {
+		display: none;
+	}
+
+	#splash .logo img {
+		display: inline-flex;
+		flex-direction: column;
+		width: var(--width);
+		height: var(--width);
+	}
+
+	#splash .loading, #splash noscript {
+		position: absolute;
+		bottom: 40px;
+		width: 100%;
+		text-align: center;
+	}
+
+	#splash noscript {
+		color: red;
+	}
+	</style>
+	
+	<script>
+	(function() {
+
+		//config vars
+		var config = {
+
+			basePath: location.href.replace(/\/$/, ''), //set basePath to the absolute URL to this file
+			loadingDelay: 2000,
+
+			isHybrid: !!window._cordovaNative,
+			isPwa: !!(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches),
+
+			assets: function() {
+				return [
+					config.basePath + "/js/config.mjs",
+					config.basePath + "/js/app.mjs",
+					config.basePath + "/css/app.css"
+				];
+			}
+
+		};
+
+		//is hybrid?
+		if(config.isHybrid) {
+			document.documentElement.classList.add('hybrid');
+		}
+		
+		//is pwa?
+		if(config.isPwa) {
+			document.documentElement.classList.add('pwa');
+		}
+
+		//process after window loaded
+		window.addEventListener('load', function() {
+
+			//non-blocking
+			setTimeout(function() {
+
+				//browser supported?
+				if(!window.fetch) {
+					return alert('Your browser is out of date and not supported. Please use a different browser to continue.');
+				}
+
+				//can use service worker?
+				if('serviceWorker' in window.navigator) {
+
+					//worker event dispatcher
+					var swEvent = function(name, args = {}) {
+						var done = false;
+						var callback = function() {
+							if(!done && document.readyState === 'complete') {
+								var e = new CustomEvent(name, { detail: args });
+								window.dispatchEvent(e);
+								done = true;
+							}
+						};
+						callback();
+						document.addEventListener('readystatechange', callback);
+					};
+
+					//register service worker
+					navigator.serviceWorker.register('sw.js', { type: 'module' }).then(function(reg) {
+						//set vars
+						var isNew = !navigator.serviceWorker.controller;
+						//callback
+						var callback = function() {
+							swEvent('swUpdate', { reg: reg, isNew: isNew });
+						};
+						//state change listener
+						var stateChangeListener = function() {
+							reg.installing.postMessage('skipWaiting');
+							reg.installing.addEventListener('statechange', function(e) {
+								if(this.state === 'installed') {
+									callback();
+								}
+							});
+						};
+						//is waiting?
+						if(reg.waiting) {
+							reg.waiting.postMessage('skipWaiting');
+							return callback();
+						}
+						//is installing?
+						if(reg.installing) {
+							return stateChangeListener();
+						}
+						//ask for notification?
+						if(reg.active && location.hash.indexOf('#push=') === 0) {
+							var id = location.hash.split('=')[1];
+							reg.active.postMessage({ action: 'getNotification', id: id });
+							location.hash = '';
+						}
+						//listen for state change
+						reg.addEventListener('updatefound', stateChangeListener);
+					}).catch(function(error) {
+						//log error
+						console.error(error.message);
+						//dispatch event
+						swEvent('swFailed', error);
+					});
+
+					//listen for messages
+					navigator.serviceWorker.addEventListener('message', function(e) {
+						//force refresh?
+						if(e.data === 'forceRefresh') {
+							location.reload();
+							return;
+						}
+					});
+
+				} else {
+
+					//log error
+					console.error('Service worker not supported');
+
+				}
+
+				//load core assets
+				config.assets().forEach(function(url) {
+
+					//set vars
+					var el, type = url.split('?')[0].split('.').pop();
+
+					//is css?
+					if(type === 'css') {
+						el = document.createElement('link');
+						el.rel = "stylesheet";
+						el.href = url;
+					}
+					//is js?
+					if(type === 'js' || type === 'mjs') {
+						el = document.createElement('script');
+						el.type = (type === 'mjs') ? 'module' : '';
+						el.async = false;
+						el.src = url;
+					}
+
+					//load asset?
+					if(el) {
+						document.documentElement.firstChild.appendChild(el);
+					}
+
+				});
+
+				//load pwa assets?
+				if(!config.isHybrid) {
+
+					//manifest
+					var manifest = document.createElement('link');
+					manifest.rel = "manifest";
+					manifest.href = "manifest.json";
+					document.documentElement.firstChild.appendChild(manifest);
+
+					//favicon
+					var favicon = document.querySelector('[rel="icon"]');
+					favicon.type = "image/png";
+					favicon.sizes = "any";
+					favicon.href = "img/icons/icon-48x48.png";
+
+					//apple touch icon
+					var apple = document.createElement('link');
+					apple.rel = 'apple-touch-icon';
+					apple.href = "img/icons/icon-144x144.png";
+					document.documentElement.firstChild.appendChild(apple);
+
+				}
+
+				//loading message
+				setTimeout(function() {
+
+					//display loading message
+					var loading = document.querySelector('#splash .loading');
+					loading.classList.remove('hidden');
+
+				}, config.loadingDelay);
+
+			}, 0);
+
+		});
+
+	})();
+	</script>
+
+</head>
+<body>
+
+	<div id="splash">
+		<div class="logo middle">
+			<img src="img/icons/icon-144x144.png" alt="Logo" width="80" height="80">
+		</div>
+		<div class="loading hidden">
+			App loading...
+		</div>
+		<noscript>
+			Please enable javascript to continue
+		</noscript>
+	</div>
+
+	<div id="root"></div>
+
+</body>
+</html>
